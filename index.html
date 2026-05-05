@@ -5,29 +5,23 @@
     <title>Crypto Panel</title>
     <style>
         body { font-family: sans-serif; background: #eef2f7; display: flex; justify-content: center; padding: 20px; }
-        .box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); width: 100%; max-width: 450px; border-top: 5px solid #0056b3; }
+        .box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); width: 100%; max-width: 500px; border-top: 5px solid #0056b3; }
         label { font-size: 11px; font-weight: bold; display: block; margin-top: 10px; color: #444; }
         input, textarea { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: monospace; }
         .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px; }
         button { padding: 10px; cursor: pointer; border: none; border-radius: 4px; background: #007bff; color: white; font-weight: bold; }
         .h-btn { grid-column: span 2; background: #5a6268; }
-        #out { margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px; font-size: 12px; word-break: break-all; border: 1px solid #ddd; }
+        #out { margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px; font-size: 12px; word-break: break-all; border: 1px solid #ddd; min-height: 40px; }
     </style>
 </head>
 <body>
 
 <div class="box">
-    <label>Klucz (32 znaki):</label>
-    <input type="text" id="k">
-    
-    <label>Dane / Ciphertext:</label>
-    <textarea id="d" rows="3"></textarea>
+    <label>Dane (Tekst do szyfrowania / Pakiet do deszyfrowania):</label>
+    <textarea id="d" rows="4"></textarea>
 
-    <label>IV (Base64):</label>
-    <input type="text" id="iv">
-    
-    <label>Tag (Base64):</label>
-    <input type="text" id="tg">
+    <label>Klucz (Tylko do deszyfrowania):</label>
+    <input type="text" id="k" placeholder="Wklej klucz jeśli deszyfrujesz">
 
     <div class="btns">
         <button onclick="enc()">Szyfruj AES</button>
@@ -35,40 +29,55 @@
         <button class="h-btn" onclick="sh()">Generuj SHA-256</button>
     </div>
 
-    <div id="out">Status: gotowy</div>
+    <div id="out">Gotowy.</div>
 </div>
 
 <script>
     const toB64 = (b) => btoa(String.fromCharCode(...new Uint8Array(b)));
     const fromB64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 
-    async function getKey(p) {
-        const enc = new TextEncoder();
-        const d = enc.encode(p.padEnd(32, '0').substring(0, 32));
-        return await crypto.subtle.importKey("raw", d, "AES-GCM", false, ["encrypt", "decrypt"]);
-    }
-
     async function enc() {
-        const key = await getKey(document.getElementById('k').value);
-        const data = new TextEncoder().encode(document.getElementById('d').value);
+        const msg = prompt("Wpisz wiadomosc do zaszyfrowania:");
+        if (!msg) return;
+
+        const rawKey = crypto.getRandomValues(new Uint8Array(32));
+        const key = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt"]);
+        
         const iv = crypto.getRandomValues(new Uint8Array(12));
-        const res = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
-        const ct = res.slice(0, res.byteLength - 16);
-        const tag = res.slice(res.byteLength - 16);
-        document.getElementById('out').innerHTML = `CT: ${toB64(ct)}<br>IV: ${toB64(iv)}<br>TAG: ${toB64(tag)}`;
+        const encoded = new TextEncoder().encode(msg);
+        
+        const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+        
+        // Budowa pakietu: IV (12B) + TAG (16B) + Ciphertext
+        const packet = new Uint8Array(iv.length + encrypted.byteLength);
+        packet.set(iv, 0);
+        packet.set(new Uint8Array(encrypted), iv.length);
+
+        document.getElementById('out').innerHTML = `
+            <strong>KLUCZ:</strong><br><input readonly value="${toB64(rawKey)}"><br><br>
+            <strong>PAKIET (IV+Tag+Text):</strong><br><textarea readonly rows="3">${toB64(packet)}</textarea>
+        `;
     }
 
     async function dec() {
         try {
-            const key = await getKey(document.getElementById('k').value);
-            const ct = fromB64(document.getElementById('d').value);
-            const iv = fromB64(document.getElementById('iv').value);
-            const tag = fromB64(document.getElementById('tg').value);
-            const combined = new Uint8Array(ct.length + tag.length);
-            combined.set(ct); combined.set(tag, ct.length);
-            const res = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, combined);
-            document.getElementById('out').innerText = "Wynik: " + new TextDecoder().decode(res);
-        } catch(e) { document.getElementById('out').innerText = "Blad: sprawdz parametry"; }
+            const packetB64 = document.getElementById('d').value;
+            const keyB64 = document.getElementById('k').value;
+            if (!packetB64 || !keyB64) return alert("Podaj pakiet i klucz!");
+
+            const fullData = fromB64(packetB64);
+            const rawKey = fromB64(keyB64);
+            
+            const iv = fullData.slice(0, 12);
+            const cipherWithTag = fullData.slice(12);
+
+            const key = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
+            const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipherWithTag);
+            
+            document.getElementById('out').innerText = "Odszyfrowano: " + new TextDecoder().decode(decrypted);
+        } catch(e) {
+            document.getElementById('out').innerText = "Blad: Niepoprawny pakiet lub klucz";
+        }
     }
 
     async function sh() {
