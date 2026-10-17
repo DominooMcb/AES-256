@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Crypto Panel</title>
+    <style>
+        body { font-family: sans-serif; background: #eef2f7; display: flex; justify-content: center; padding: 20px; }
+        .box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); width: 100%; max-width: 500px; border-top: 5px solid #0056b3; }
+        .tabs { display: flex; gap: 5px; margin-bottom: 20px; flex-wrap: wrap; }
+        .tabs button { flex: 1; padding: 10px; cursor: pointer; border: none; background: #ddd; border-radius: 4px; font-weight: bold; min-width: 80px; font-size: 11px; }
+        .tabs button.active { background: #007bff; color: white; }
+        .panel { display: none; }
+        .panel.active { display: block; }
+        label { font-size: 11px; font-weight: bold; display: block; margin-top: 10px; }
+        input, textarea, select { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: monospace; }
+        button.exec { width: 100%; margin-top: 15px; padding: 12px; cursor: pointer; border: none; border-radius: 4px; background: #218838; color: white; font-weight: bold; }
+        .res { margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px; font-size: 12px; word-break: break-all; border: 1px solid #ddd; }
+        input[type="file"] { margin-top: 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+
+<div class="box">
+    <div class="tabs">
+        <button onclick="tab(0)" id="t0" class="active">Encrypt</button>
+        <button onclick="tab(1)" id="t1">Decrypt</button>
+        <button onclick="tab(2)" id="t2">SHA256</button>
+        <button onclick="tab(3)" id="t3">Encrypt File</button>
+        <button onclick="tab(4)" id="t4">Decrypt File</button>
+        <button onclick="tab(5)" id="t5">Hex / Base64</button>
+    </div>
+
+    <!-- Text Encryption -->
+    <div id="p0" class="panel active">
+        <label>Text to encrypt:</label>
+        <textarea id="e_data" rows="3"></textarea>
+        <button class="exec" onclick="enc()">Encrypt AES</button>
+        <div id="e_res" class="res">Ready.</div>
+    </div>
+
+    <!-- Text Decryption -->
+    <div id="p1" class="panel">
+        <label>Package (IV+Tag+Text):</label>
+        <textarea id="d_pack" rows="3"></textarea>
+        <label>Key:</label>
+        <input type="text" id="d_key">
+        <button class="exec" style="background:#007bff" onclick="dec()">Decrypt AES</button>
+        <div id="d_res" class="res">Awaiting data.</div>
+    </div>
+
+    <!-- SHA256 with Salt & File/Text support -->
+    <div id="p2" class="panel">
+        <label>Input Type:</label>
+        <select id="s_type" onchange="toggleHashInput()">
+            <option value="text">Text</option>
+            <option value="file">File</option>
+        </select>
+
+        <div id="s_text_container">
+            <label>Text to hash:</label>
+            <textarea id="s_data" rows="3"></textarea>
+        </div>
+
+        <div id="s_file_container" style="display: none;">
+            <label>Select file to hash:</label>
+            <input type="file" id="s_file">
+        </div>
+
+        <label>Optional Salt (Text):</label>
+        <input type="text" id="s_salt" placeholder="Leave empty for no salt">
+
+        <label>Salt Position:</label>
+        <select id="s_salt_pos">
+            <option value="prefix">Before data (Prefix)</option>
+            <option value="suffix">After data (Suffix)</option>
+        </select>
+
+        <button class="exec" style="background:#6c757d" onclick="sh()">Generate SHA256</button>
+        <div id="s_res" class="res">Enter text or select a file.</div>
+    </div>
+
+    <!-- File Encryption -->
+    <div id="p3" class="panel">
+        <label>Select file to encrypt:</label>
+        <input type="file" id="file_to_enc">
+        <label>Custom Key Base64 (Optional, 32 bytes):</label>
+        <input type="text" id="file_custom_key" placeholder="Leave empty to generate random key">
+        <button class="exec" style="background:#28a745" onclick="encFile()">Encrypt File</button>
+        <div id="fe_res" class="res">Ready to encrypt file.</div>
+    </div>
+
+    <!-- File Decryption -->
+    <div id="p4" class="panel">
+        <label>Select locked file (.locked):</label>
+        <input type="file" id="file_to_dec">
+        <label>Key Base64:</label>
+        <input type="text" id="file_dec_key" placeholder="Paste Base64 key">
+        <button class="exec" style="background:#17a2b8" onclick="decFile()">Decrypt File</button>
+        <div id="fd_res" class="res">Ready to decrypt file.</div>
+    </div>
+
+    <!-- Hex / Base64 Converter -->
+    <div id="p5" class="panel">
+        <label>Conversion Direction:</label>
+        <select id="conv_dir">
+            <option value="hex2b64">Hex ➔ Base64</option>
+            <option value="b642hex">Base64 ➔ Hex</option>
+        </select>
+
+        <label>Input Data:</label>
+        <textarea id="conv_input" rows="3" placeholder="Paste Hex or Base64 data..."></textarea>
+
+        <button class="exec" style="background:#e0a800; color:#111;" onclick="convertHexB64()">Convert</button>
+        <div id="conv_res" class="res">Enter data to convert.</div>
+    </div>
+</div>
+
+<script>
+    const toB64 = (b) => btoa(String.fromCharCode(...new Uint8Array(b)));
+    const fromB64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+    const bytesToHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    const hexToBytes = (hex) => {
+        const cleanHex = hex.replace(/\s+/g, '');
+        if (cleanHex.length % 2 !== 0) throw new Error("Invalid Hex length!");
+        const bytes = new Uint8Array(cleanHex.length / 2);
+        for (let i = 0; i < cleanHex.length; i += 2) {
+            const byte = parseInt(cleanHex.substr(i, 2), 16);
+            if (isNaN(byte)) throw new Error("Invalid Hex character!");
+            bytes[i / 2] = byte;
+        }
+        return bytes;
+    };
+
+    function tab(idx) {
+        document.querySelectorAll('.panel, .tabs button').forEach(el => el.classList.remove('active'));
+        document.getElementById('p' + idx).classList.add('active');
+        document.getElementById('t' + idx).classList.add('active');
+    }
+
+    function toggleHashInput() {
+        const type = document.getElementById('s_type').value;
+        if (type === 'text') {
+            document.getElementById('s_text_container').style.display = 'block';
+            document.getElementById('s_file_container').style.display = 'none';
+        } else {
+            document.getElementById('s_text_container').style.display = 'none';
+            document.getElementById('s_file_container').style.display = 'block';
+        }
+    }
+
+    async function enc() {
+        const txt = document.getElementById('e_data').value;
+        if(!txt) return;
+        const rk = crypto.getRandomValues(new Uint8Array(32));
+        const k = await crypto.subtle.importKey("raw", rk, "AES-GCM", false, ["encrypt"]);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encd = await crypto.subtle.encrypt({name: "AES-GCM", iv}, k, new TextEncoder().encode(txt));
+        const pack = new Uint8Array(iv.length + encd.byteLength);
+        pack.set(iv, 0); pack.set(new Uint8Array(encd), 12);
+        document.getElementById('e_res').innerHTML = `KEY:<br><input readonly value="${toB64(rk)}"><br>PACKAGE:<br><textarea readonly>${toB64(pack)}</textarea>`;
+    }
+
+    async function dec() {
+        try {
+            const p64 = document.getElementById('d_pack').value;
+            const k64 = document.getElementById('d_key').value;
+            const fd = fromB64(p64);
+            const k = await crypto.subtle.importKey("raw", fromB64(k64), "AES-GCM", false, ["decrypt"]);
+            const res = await crypto.subtle.decrypt({name: "AES-GCM", iv: fd.slice(0,12)}, k, fd.slice(12));
+            document.getElementById('d_res').innerText = "Result: " + new TextDecoder().decode(res);
+        } catch(e) { document.getElementById('d_res').innerText = "Data error"; }
+    }
+
+    async function sh() {
+        try {
+            const type = document.getElementById('s_type').value;
+            const saltVal = document.getElementById('s_salt').value;
+            const saltPos = document.getElementById('s_salt_pos').value;
+            
+            let dataBuffer;
+            if (type === 'text') {
+                const txt = document.getElementById('s_data').value;
+                dataBuffer = new TextEncoder().encode(txt);
+            } else {
+                const fileInput = document.getElementById('s_file');
+                if (fileInput.files.length === 0) {
+                    document.getElementById('s_res').innerText = "Please select a file!";
+                    return;
+                }
+                dataBuffer = await fileInput.files[0].arrayBuffer();
+            }
+
+            const saltBuffer = new TextEncoder().encode(saltVal);
+            
+            let combined;
+            if (!saltVal) {
+                combined = dataBuffer;
+            } else {
+                const dataBytes = new Uint8Array(dataBuffer);
+                combined = new Uint8Array(saltBuffer.length + dataBytes.length);
+                if (saltPos === 'prefix') {
+                    combined.set(saltBuffer, 0);
+                    combined.set(dataBytes, saltBuffer.length);
+                } else {
+                    combined.set(dataBytes, 0);
+                    combined.set(saltBuffer, dataBytes.length);
+                }
+            }
+
+            const h = await crypto.subtle.digest('SHA-256', combined);
+            const hashHex = Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2,'0')).join('');
+            document.getElementById('s_res').innerText = "Hash: " + hashHex;
+        } catch(err) {
+            document.getElementById('s_res').innerText = "Error generating hash: " + err;
+        }
+    }
+
+    async function encFile() {
+        const fileInput = document.getElementById('file_to_enc');
+        if (fileInput.files.length === 0) {
+            document.getElementById('fe_res').innerText = "Please select a file first!";
+            return;
+        }
+        const file = fileInput.files[0];
+        
+        try {
+            let rk;
+            const customKeyVal = document.getElementById('file_custom_key').value.trim();
+            if (customKeyVal) {
+                rk = fromB64(customKeyVal);
+                if (rk.length !== 32) {
+                    alert("Key must be exactly 32 bytes after Base64 decoding!");
+                    return;
+                }
+            } else {
+                rk = crypto.getRandomValues(new Uint8Array(32));
+            }
+
+            const k = await crypto.subtle.importKey("raw", rk, "AES-GCM", false, ["encrypt"]);
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            
+            const fileBuffer = await file.arrayBuffer();
+            const encryptedContent = await crypto.subtle.encrypt({name: "AES-GCM", iv: iv}, k, fileBuffer);
+
+            const pack = new Uint8Array(iv.length + encryptedContent.byteLength);
+            pack.set(iv, 0);
+            pack.set(new Uint8Array(encryptedContent), 12);
+
+            const blob = new Blob([pack]);
+            const url = URL.createObjectURL(blob);
+            
+            let htmlRes = `Encryption successful! 🎉<br><a href="${url}" download="${file.name}.locked" style="font-weight:bold; color:#0056b3;">Download ${file.name}.locked</a>`;
+            if (!customKeyVal) {
+                htmlRes += `<br><br>KEY (save it!):<br><input readonly value="${toB64(rk)}">`;
+            }
+            document.getElementById('fe_res').innerHTML = htmlRes;
+        } catch(err) {
+            document.getElementById('fe_res').innerText = "File encryption error: " + err;
+        }
+    }
+
+    async function decFile() {
+        const fileInput = document.getElementById('file_to_dec');
+        const keyVal = document.getElementById('file_dec_key').value.trim();
+        
+        if (fileInput.files.length === 0 || !keyVal) {
+            document.getElementById('fd_res').innerText = "Please select a .locked file and enter key!";
+            return;
+        }
+        const file = fileInput.files[0];
+
+        try {
+            const fileBuffer = await file.arrayBuffer();
+            const data = new Uint8Array(fileBuffer);
+            
+            const iv = data.slice(0, 12);
+            const ciphertextWithTag = data.slice(12);
+
+            const rk = fromB64(keyVal);
+            const k = await crypto.subtle.importKey("raw", rk, "AES-GCM", false, ["decrypt"]);
+
+            const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv: iv}, k, ciphertextWithTag);
+
+            const originalName = file.name.endsWith('.locked') ? file.name.slice(0, -7) : "decrypted_" + file.name;
+            const blob = new Blob([decrypted]);
+            const url = URL.createObjectURL(blob);
+
+            document.getElementById('fd_res').innerHTML = `Decryption successful! 🔓<br><a href="${url}" download="${originalName}" style="font-weight:bold; color:#218838;">Download decrypted file</a>`;
+        } catch(e) {
+            document.getElementById('fd_res').innerText = "Decryption error! Wrong key or corrupted file.";
+        }
+    }
+
+    function convertHexB64() {
+        const dir = document.getElementById('conv_dir').value;
+        const input = document.getElementById('conv_input').value.trim();
+
+        if (!input) {
+            document.getElementById('conv_res').innerText = "Please enter data to convert.";
+            return;
+        }
+
+        try {
+            if (dir === 'hex2b64') {
+                const bytes = hexToBytes(input);
+                const b64 = toB64(bytes);
+                document.getElementById('conv_res').innerHTML = `Base64:<br><textarea readonly rows="2">${b64}</textarea>`;
+            } else {
+                const bytes = fromB64(input);
+                const hex = bytesToHex(bytes);
+                document.getElementById('conv_res').innerHTML = `Hex:<br><textarea readonly rows="2">${hex}</textarea>`;
+            }
+        } catch (e) {
+            document.getElementById('conv_res').innerText = "Conversion error: " + e.message;
+        }
+    }
+</script>
+
+</body>
+</html>
